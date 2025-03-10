@@ -1,0 +1,45 @@
+---
+title: "BreastCancer_CaseStudy"
+output: pdf_document
+date: "2025-02-27"
+---
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+This case study is based on the Breast Cancer Wisconsin (Diagnostic) Data Set (https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data). The data set contains 569 observations and 32 variables. The data set is available at the UCI Machine Learning Repository. The data set contains mean (and at times min and max) values of the patient for the following numeric (continious) variables:
+
+a) radius (mean of distances from center to points on the perimeter)
+b) texture (standard deviation of gray-scale values)
+c) perimeter
+d) area
+e) smoothness (local variation in radius lengths)
+f) compactness (perimeter^2 / area - 1.0)
+g) concavity (severity of concave portions of the contour)
+h) concave points (number of concave portions of the contour)
+i) symmetry
+j) fractal dimension ("coastline approximation" - 1)
+
+The data set also contains the following Binary variables:
+
+2) Diagnosis (M = malignant, B = benign)
+
+Where Malignant (M) means the tumor is cancerous, while Benign (B): means that the tumor is non-cancerous.
+
+
+## Read Data
+```{r}
+data <- read.csv("data.csv", header = TRUE, sep = ",")
+head(data)
+```
+

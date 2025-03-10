@@ -4,7 +4,7 @@ output: pdf_document
 date: "2025-02-27"
 ---
 
-```{r}
+```{r warning=FALSE}
 library(readr)
 library(dplyr)
 library(ggplot2)
@@ -40,6 +40,99 @@ Where Malignant (M) means the tumor is cancerous, while Benign (B): means that t
 ## Read Data
 ```{r}
 data <- read.csv("data.csv", header = TRUE, sep = ",")
+data <- data %>% select(-X)
 head(data)
+```
+
+## ETL
+
+### Relation with response var
+
+```{r, fig.align='left'}
+numeric_vars <- data %>%select_if(is.numeric) %>% colnames()
+numeric_vars <- setdiff(numeric_vars, "id")
+
+plots <- lapply(numeric_vars, function(var) {
+  ggplot(data, aes(x = factor(diagnosis), y = .data[[var]])) + 
+    geom_boxplot() +  
+    labs(x = "Diagnosis", y = var) +
+    theme_minimal()
+})
+
+# Print all plots
+# install.packages("gridExtra")
+library(gridExtra)
+
+# Display plots in batches of 6 (2 rows × 3 columns)
+num_plots <- length(plots)
+batch_size <- 6
+
+for(i in seq(1, num_plots, batch_size)) {
+  end_idx <- min(i + batch_size - 1, num_plots)
+  batch_plots <- plots[i:end_idx]
+  grid.arrange(grobs = batch_plots, ncol = 3)
+}
+```
+
+
+
+```{r include=FALSE}
+### SEPARATION : I think in this example is not important
+
+# IF ONE VARIABLE COMPLETE SEPARATE THE RESPONSE VARIABLE IS A PROBLEM
+
+for(var in numeric_vars) {
+  tbl <- table(data$diagnosis, data[[var]] > median(data[[var]]))
+  if(any(tbl == 0)) {
+    print(paste("Potential separation with variable:", var))
+  }
+}
+```
+
+### Multicollinearity
+
+```{r}
+# Check correlation between numeric variables
+library(corrplot)
+cor_matrix <- cor(data[, numeric_vars])
+corrplot(cor_matrix, method = "circle")
+
+# Or find highly correlated variables
+high_cor <- findCorrelation(cor_matrix, cutoff = 0.8)
+problematic_vars <- numeric_vars[high_cor]
+print(problematic_vars)
+```
+
+
+# Logistic Regression
+
+```{r warning=FALSE}
+library(MCMCpack)
+```
+
+```{r, fig.width=8, fig.height=6, fig.align='left'}
+data <- data %>% mutate(diagnosis_n = ifelse(diagnosis== "M",1,0))
+predictors <- setdiff(names(data), c("diagnosis", "id", "diagnosis_n"))
+formula_str <- paste("diagnosis_n ~", paste(predictors, collapse = " + "))
+formula <- as.formula(formula_str)
+
+out = MCMClogit(formula, data, burnin=1000, mcmc=21000)
+# THE REGRESSION WITH ALL THE VARIABLES DOES NOT WORK BECAUSE OF MULTICOLLINEARITY 
+# PROBLEMS
+plot(out)
+```
+
+```{r}
+#install.packages("MCMCpack")  # If not installed
+library(MCMCpack)
+
+# Run Bayesian logistic regression with Spike-and-Slab priors (to variable selection)
+set.seed(123)
+model <- MCMClogit(formula, data = data, burnin = 5000, mcmc = 20000
+                   , marginal.likelihood = "Laplace") # , thin = 10, b0 = 0, B0 = 0.1
+
+summary(model)
+
+apply(model, 2, function(x) mean(x != 0))  # Approximate inclusion probability
 ```
 

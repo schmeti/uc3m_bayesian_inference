@@ -103,6 +103,19 @@ problematic_vars <- numeric_vars[high_cor]
 print(problematic_vars)
 ```
 
+```{r}
+# I SAW THIS IN DTR THAT CAN HELP US 
+prob_data_rec <- prob_data |>
+  recipe() |>
+  step_zv(everything()) |>
+  step_nzv(everything()) |>
+  step_filter_missing(everything(), threshold = 0.1) |> # threshold of missingness
+  step_corr(everything(), threshold = 0.9, method = "spearman") |> # threshold of correlation
+  step_lincomb(everything()) |>
+  prep()
+prob_data_rec
+```
+
 
 # Logistic Regression
 

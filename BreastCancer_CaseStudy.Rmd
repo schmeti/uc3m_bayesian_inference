@@ -43,6 +43,7 @@ data <- read.csv("data.csv", header = TRUE, sep = ",")
 data <- dplyr::select(data, -X)
 names(data) <- gsub("\\.", "_", names(data))
 data$diagnosis <- ifelse(data$diagnosis == "M", 1, 0)
+data <- data %>%  select(-id)
 
 ```
 
@@ -52,7 +53,6 @@ data$diagnosis <- ifelse(data$diagnosis == "M", 1, 0)
 
 ```{r, fig.align='left'}
 numeric_vars <- data %>%select_if(is.numeric) %>% colnames()
-numeric_vars <- setdiff(numeric_vars, "id")
 
 plots <- lapply(numeric_vars, function(var) {
   ggplot(data, aes(x = factor(diagnosis), y = .data[[var]], fill = diagnosis)) + 
@@ -81,7 +81,7 @@ library(dplyr)
 library(tidyr)
 
 summary_stat <- data %>% 
-  group_by(diagnosis) %>% 
+  group_by(factor(diagnosis)) %>% 
   summarise(across(all_of(numeric_vars), 
                   list(
                     mean = ~mean(.x, na.rm = TRUE),
@@ -95,25 +95,14 @@ summary_stat <- data %>%
 
 # For easier viewing, you can pivot longer
 summary_long <- summary_stat %>%
-  pivot_longer(cols = -diagnosis, 
+  pivot_longer(cols = -`factor(diagnosis)`, 
                names_to = c("variable", "stat"), 
                names_pattern = "(.*)_(.*)")
 
+summary_long
 ```
 
-```{r include=FALSE}
-### SEPARATION : I think in this example is not important
-
-# IF ONE VARIABLE COMPLETE SEPARATE THE RESPONSE VARIABLE IS A PROBLEM
-for(var in numeric_vars) {
-  tbl <- table(data$diagnosis, data[[var]] > median(data[[var]]))
-  if(any(tbl == 0)) {
-    print(paste("Potential separation with variable:", var))
-  }
-}
-```
-
-## Multicollinearity
+## Correlation
 
 ```{r}
 # Check correlation between numeric variables
@@ -127,37 +116,17 @@ problematic_vars <- numeric_vars[high_cor]
 print(problematic_vars)
 ```
 
-```{r}
-library(tidymodels)
-# I SAW THIS IN DTR THAT CAN HELP US 
-prob_data_rec <- data |>
-  select(all_of(numeric_vars))|>
-  recipe() |>
-  step_zv(everything()) |> # zero variance
-  step_nzv(everything()) |> # near zero variance
-  step_filter_missing(everything(), threshold = 0.1) |> # threshold of missingness
-  step_corr(everything(), threshold = 0.9, method = "spearman") |> # threshold of correlation
-  step_lincomb(everything()) |> # exact linear combination between them 
-  prep()
-prob_data_rec
-# TODAS LAS QUE SACA ES POR CORRELACIÓN
-prob_data_rec[["steps"]][[4]][["removals"]]
-vars_to_exclude
-```
+# Variable Selection
+<!-- SILVANA -->
 
+## Frequentist Approach
 
-
-# Logistic Regression
-
-```{r warning=FALSE}
-library(MCMCpack)
-```
+Check VIF and remove variables with extremly high values
 
 ```{r}
 library(car)
-data <- data %>% mutate(diagnosis_n = ifelse(diagnosis== "M",1,0))
-predictors <- setdiff(names(data), c("diagnosis", "id", "diagnosis_n"))
-formula_str <- paste("diagnosis_n ~", paste(predictors, collapse = " + "))
+predictors <- setdiff(names(data), c("diagnosis"))
+formula_str <- paste("diagnosis ~", paste(predictors, collapse = " + "))
 formula <- as.formula(formula_str)
 
 l_reg = lm(formula, data)
@@ -171,33 +140,112 @@ vif_df <- vif_df %>% arrange(desc(VIF))
 print(vif_df)
 
 vars_to_exclude <- c(head(vif_df,15)$Variable)
-setdiff(problematic_vars , vars_to_exclude)
-setdiff(vars_to_exclude, problematic_vars)
+# setdiff(problematic_vars , vars_to_exclude)
+# setdiff(vars_to_exclude, problematic_vars)
 ```
+
+Check correlations after excluding x VIF, variables to pay attention if something does not work.
 
 ```{r}
 # Check correlation between numeric variables
 library(corrplot)
-cor_matrix <- cor(data[, setdiff(numeric_vars, vars_to_exclude)])
+cor_matrix_f <- cor(data[, setdiff(numeric_vars, vars_to_exclude)])
 corrplot(cor_matrix, method = "circle")
 
 # Or find highly correlated variables
-high_cor_f <- findCorrelation(cor_matrix, cutoff = 0.8)
-problematic_vars_f <- numeric_vars[high_cor_f]
+high_cor_f <- findCorrelation(cor_matrix_f, cutoff = 0.8)
+problematic_vars_f <- setdiff(numeric_vars, vars_to_exclude)[high_cor_f]
 print(problematic_vars_f)
+
+selected_freq <- setdiff(numeric_vars, vars_to_exclude)
+```
+
+## Bayesian Approach
+
+```{r}
+library(BAS)
+
+# Fit a Bayesian logistic regression with variable selection
+model_bas <- bas.glm(diagnosis ~ ., 
+                     data = data,
+                     family = binomial(),
+                     method = "MCMC", # or "BAS" for deterministic sampling
+                     MCMC.iterations = 10000,
+                     modelprior = uniform()) # Prior over model space
+
+# Summary of results
+summary(model_bas)
+
+# Posterior inclusion probabilities
+pip <- model_bas$probne0
+variable_names <- names(pip)
+pip_df <- data.frame(Variable = numeric_vars, 
+                     InclusionProb = pip)
+pip_df <- pip_df[order(pip_df$InclusionProb, decreasing = TRUE),]
+print(pip_df)
+
+selected_bayes <- c( "perimeter_mean", "concave_points_mean", "compactness_mean",
+                     "concavity_mean", "area_se", "smoothness_se", "concave_points_se",
+                     "fractal_dimension_se","radius_worst", "texture_worst",
+                     "fractal_dimension_worst")
+```
+
+# Logistic Models
+
+## Freq var selection
+
+```{r warning=FALSE}
+formula_str <- paste("diagnosis ~", paste(selected_freq, collapse = " + "))
+formula <- as.formula(formula_str)
+
+freq_model1<-lm(formula, data = data)
+beta.start1 <- coef(freq_model1)
+
+out = MCMClogit(formula, data, burnin=1000, mcmc=21000, beta.start = beta.start1)
+summary(out)
+
+acf(out[,1])
+acf(out[,2])
+
+# Correct autocorrelation
+
+out = MCMClogit(formula, data, burnin=5000, mcmc=30000, thin = 30,
+                beta.start = beta.start1)
+summary(out)
+acf(out[,1])
+acf(out[,2])
+
+```
+
+```{r, fig.width=8, fig.height=6, fig.align='left'}
+plot(out)
+```
+## Bayes var selection
+
+```{r}
+formula_str_b <- paste("diagnosis ~", paste(selected_bayes, collapse = " + "))
+formula_b <- as.formula(formula_str_b)
+
+# starting point
+freq_model<-lm(formula_b, data = data)
+beta.start <- coef(freq_model)
+
+out_b = MCMClogit(formula_b, data, burnin=1000, mcmc=21000)
+summary(out_b)
+acf(out_b[,1])
+acf(out_b[,2])
+
+out_b = MCMClogit(formula_b, data, burnin=5000, mcmc=50000, 
+                  beta.start = beta.start, thin = 50, tune=0.5)
+
+summary(out_b)
+acf(out_b[,1])
+acf(out_b[,2])
 ```
 
 
 ```{r, fig.width=8, fig.height=6, fig.align='left'}
-data <- data %>% mutate(diagnosis_n = ifelse(diagnosis== "M",1,0))
-predictors <- setdiff(names(data), c("diagnosis", "id", "diagnosis_n"))
-formula_str <- paste("diagnosis_n ~", paste(predictors, collapse = " + "))
-formula <- as.formula(formula_str)
-
-out = MCMClogit(formula, data, burnin=1000, mcmc=21000)
-# THE REGRESSION WITH ALL THE VARIABLES DOES NOT WORK BECAUSE OF MULTICOLLINEARITY 
-# PROBLEMS
-plot(out)
+plot(out_b)
 ```
 
 ```{r}

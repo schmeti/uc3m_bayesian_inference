@@ -53,6 +53,7 @@ data <- data %>%  select(-id)
 
 ```{r, fig.align='left'}
 numeric_vars <- data %>%select_if(is.numeric) %>% colnames()
+numeric_vars <- setdiff(numeric_vars, "diagnosis")
 
 plots <- lapply(numeric_vars, function(var) {
   ggplot(data, aes(x = factor(diagnosis), y = .data[[var]], fill = diagnosis)) + 

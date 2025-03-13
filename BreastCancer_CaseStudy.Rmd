@@ -228,7 +228,7 @@ model_formula
 ```
 
 
-```{r}
+```{r,warning=FALSE}
 # Fit the frequentist logistic regression model
 library(MASS)
 logit_frequentist <- glm(model_formula, data = data, family = binomial)
@@ -258,21 +258,56 @@ summary(logit_bayesian)
 
 ```
 
+```{r}
+# DIC Code
+
+
+model = logit_bayesian
+X <- model.matrix(~ concave_points_mean+radius_worst+perimeter_worst, data = data) # model matrix
+
+dev = 0
+for (i in 1:nrow(model)) {
+  params <- model[i,]
+  p = inv.logit(X %*% params)
+  p[data$target == 0] = 1-p[data$target == 0]
+  dev = dev - 2 * sum(log(p))  # Negative log-likelihood
+}
+D_bar = dev / nrow(model)
+
+# D_theta: Deviance at the posterior mean (using the average parameter values)
+posterior_means <- colMeans(model)
+#X <- model.matrix(~ predictors, data = data)
+linear_predictor <- X %*% posterior_means
+p_post <- inv.logit(linear_predictor)
+p_post[data$target == 0] = 1-p_post[data$target == 0]
+
+D_theta = -2 * sum(log(p_post)) # Deviance at the posterior mean
+
+# p_D: Posterior deviance penalty
+p_D = D_bar - D_theta
+
+# DIC
+DIC = D_bar + p_D
+
+print(list(DIC=DIC, D_bar=D_bar, p_D=p_D))
+```
+
 
 
 
 ```{r}
 # DIC Function
-DIC = function(model, data) {
+DIC = function(model, predictors, data, target) {
   
   # D_bar: Get mean Deviance of MCMC 
   dev = 0
   for (i in 1:nrow(model)) {
     params <- model[i,]
-    #X <- model.matrix(~ predictors, data = data)
-    X = as.matrix(model)
+    X <- model.matrix(~ predictors, data = data)
+    print(X)
+    print(params)
     p = inv.logit(X %*% params)
-    p[data$diagnosis == 0] = 1-p[data$diagnosis == 0]
+    p[data$target == 0] = 1-p[data$target == 0]
     dev = dev - 2 * sum(log(p))  # Negative log-likelihood
     print(dev)
   }
@@ -280,11 +315,10 @@ DIC = function(model, data) {
   
   # D_theta: Deviance at the posterior mean (using the average parameter values)
   posterior_means <- colMeans(model)
-  #X <- model.matrix(~ predictors, data = data)
-  X = as.matrix(model)
+  X <- model.matrix(~ predictors, data = data)
   linear_predictor <- X %*% posterior_means
   p_post <- inv.logit(linear_predictor)
-  p_post[data$diagnosis == 0] = 1-p_post[data$diagnosis == 0]
+  p_post[data$target == 0] = 1-p_post[data$target == 0]
   
   D_theta = -2 * sum(log(p_post)) # Deviance at the posterior mean
   
@@ -295,7 +329,6 @@ DIC = function(model, data) {
   DIC = D_bar + p_D
   return(list(DIC=DIC, D_bar=D_bar, p_D=p_D))
 }
-
 
 ```
 

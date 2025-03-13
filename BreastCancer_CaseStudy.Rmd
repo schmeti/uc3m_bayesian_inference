@@ -44,16 +44,16 @@ data <- data %>% select(-X)
 head(data)
 ```
 
-## ETL
+# ETL - Variable selection
 
-### Relation with response var
+## Relation with response var
 
 ```{r, fig.align='left'}
 numeric_vars <- data %>%select_if(is.numeric) %>% colnames()
 numeric_vars <- setdiff(numeric_vars, "id")
 
 plots <- lapply(numeric_vars, function(var) {
-  ggplot(data, aes(x = factor(diagnosis), y = .data[[var]])) + 
+  ggplot(data, aes(x = factor(diagnosis), y = .data[[var]], fill = diagnosis)) + 
     geom_boxplot() +  
     labs(x = "Diagnosis", y = var) +
     theme_minimal()
@@ -74,13 +74,35 @@ for(i in seq(1, num_plots, batch_size)) {
 }
 ```
 
+```{r}
+library(dplyr)
+library(tidyr)
 
+summary_stat <- data %>% 
+  group_by(diagnosis) %>% 
+  summarise(across(all_of(numeric_vars), 
+                  list(
+                    mean = ~mean(.x, na.rm = TRUE),
+                    sd = ~sd(.x, na.rm = TRUE),
+                    median = ~median(.x, na.rm = TRUE),
+                    min = ~min(.x, na.rm = TRUE),
+                    max = ~max(.x, na.rm = TRUE)
+                  )
+            ))
+
+
+# For easier viewing, you can pivot longer
+summary_long <- summary_stat %>%
+  pivot_longer(cols = -diagnosis, 
+               names_to = c("variable", "stat"), 
+               names_pattern = "(.*)_(.*)")
+
+```
 
 ```{r include=FALSE}
 ### SEPARATION : I think in this example is not important
 
 # IF ONE VARIABLE COMPLETE SEPARATE THE RESPONSE VARIABLE IS A PROBLEM
-
 for(var in numeric_vars) {
   tbl <- table(data$diagnosis, data[[var]] > median(data[[var]]))
   if(any(tbl == 0)) {
@@ -89,7 +111,7 @@ for(var in numeric_vars) {
 }
 ```
 
-### Multicollinearity
+## Multicollinearity
 
 ```{r}
 # Check correlation between numeric variables
@@ -104,17 +126,23 @@ print(problematic_vars)
 ```
 
 ```{r}
+library(tidymodels)
 # I SAW THIS IN DTR THAT CAN HELP US 
-prob_data_rec <- prob_data |>
+prob_data_rec <- data |>
+  select(all_of(numeric_vars))|>
   recipe() |>
-  step_zv(everything()) |>
-  step_nzv(everything()) |>
+  step_zv(everything()) |> # zero variance
+  step_nzv(everything()) |> # near zero variance
   step_filter_missing(everything(), threshold = 0.1) |> # threshold of missingness
   step_corr(everything(), threshold = 0.9, method = "spearman") |> # threshold of correlation
-  step_lincomb(everything()) |>
+  step_lincomb(everything()) |> # exact linear combination between them 
   prep()
 prob_data_rec
+# TODAS LAS QUE SACA ES POR CORRELACIÓN
+prob_data_rec[["steps"]][[4]][["removals"]]
+vars_to_exclude
 ```
+
 
 
 # Logistic Regression
@@ -122,6 +150,41 @@ prob_data_rec
 ```{r warning=FALSE}
 library(MCMCpack)
 ```
+
+```{r}
+library(car)
+data <- data %>% mutate(diagnosis_n = ifelse(diagnosis== "M",1,0))
+predictors <- setdiff(names(data), c("diagnosis", "id", "diagnosis_n"))
+formula_str <- paste("diagnosis_n ~", paste(predictors, collapse = " + "))
+formula <- as.formula(formula_str)
+
+l_reg = lm(formula, data)
+vif_values <- vif(l_reg)
+
+vif_df <- data.frame(
+  Variable = names(vif_values),
+  VIF = vif_values
+)
+vif_df <- vif_df %>% arrange(desc(VIF))
+print(vif_df)
+
+vars_to_exclude <- c(head(vif_df,15)$Variable)
+setdiff(problematic_vars , vars_to_exclude)
+setdiff(vars_to_exclude, problematic_vars)
+```
+
+```{r}
+# Check correlation between numeric variables
+library(corrplot)
+cor_matrix <- cor(data[, setdiff(numeric_vars, vars_to_exclude)])
+corrplot(cor_matrix, method = "circle")
+
+# Or find highly correlated variables
+high_cor_f <- findCorrelation(cor_matrix, cutoff = 0.8)
+problematic_vars_f <- numeric_vars[high_cor_f]
+print(problematic_vars_f)
+```
+
 
 ```{r, fig.width=8, fig.height=6, fig.align='left'}
 data <- data %>% mutate(diagnosis_n = ifelse(diagnosis== "M",1,0))

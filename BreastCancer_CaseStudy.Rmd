@@ -1,13 +1,22 @@
 ---
-title: "BreastCancer_CaseStudy"
+title: "Breast Cancer Prediction Case Study - Bayesian Logistic Regression with Comparison of Frequentist and Bayesian Variable Selection Methods"
 output: pdf_document
-date: "2025-02-27"
+date: "2025-03-14"
+author: "Laura Silvana Alvarez Luque, Florencia Luque, Nicolas Bühringer, Simon Schmetz"
+
 ---
 
-```{r warning=FALSE}
+```{r warning=FALSE,include=FALSE}
 library(readr)
 library(dplyr)
 library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(corrplot)
+library(caret)
+library(MCMCpack)
+library(car)
+library(boot)
 ```
 
 
@@ -15,7 +24,7 @@ library(ggplot2)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Introduction 
+# Introduction 
 
 This case study is based on the Breast Cancer Wisconsin (Diagnostic) Data Set (https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data). The data set contains 569 observations and 32 variables. The data set is available at the UCI Machine Learning Repository. The data set contains mean (and at times min and max) values of the patient for the following numeric (continious) variables:
 
@@ -37,7 +46,7 @@ The data set also contains the following Binary variables:
 Where Malignant (M) means the tumor is cancerous, while Benign (B): means that the tumor is non-cancerous.
 
 
-## Read Data
+# Read Data
 ```{r}
 data <- read.csv("data.csv", header = TRUE, sep = ",")
 data <- dplyr::select(data, -c(X,id))
@@ -47,7 +56,7 @@ data$diagnosis <- ifelse(data$diagnosis == "M", 1, 0)
 
 ```
 
-# ETL - Variable selection
+# Exploratory Data Analysis
 
 ## Relation with response var
 
@@ -78,9 +87,6 @@ for(i in seq(1, num_plots, batch_size)) {
 ```
 
 ```{r}
-library(dplyr)
-library(tidyr)
-
 summary_stat <- data %>% 
   group_by(factor(diagnosis)) %>% 
   summarise(across(all_of(numeric_vars), 
@@ -107,7 +113,6 @@ summary_long
 
 ```{r}
 # Check correlation between numeric variables
-library(corrplot)
 cor_matrix <- cor(data[, numeric_vars])
 corrplot(cor_matrix, method = "circle")
 
@@ -125,7 +130,6 @@ print(problematic_vars)
 Check VIF and remove variables with extremly high values
 
 ```{r}
-library(car)
 predictors <- setdiff(names(data), c("diagnosis"))
 formula_str <- paste("diagnosis ~", paste(predictors, collapse = " + "))
 formula <- as.formula(formula_str)
@@ -149,7 +153,6 @@ Check correlations after excluding x VIF, variables to pay attention if somethin
 
 ```{r}
 # Check correlation between numeric variables
-library(corrplot)
 cor_matrix_f <- cor(data[, setdiff(numeric_vars, vars_to_exclude)])
 corrplot(cor_matrix, method = "circle")
 
@@ -180,10 +183,10 @@ summary(model_bas)
 # Posterior inclusion probabilities
 pip <- model_bas$probne0
 variable_names <- names(pip)
-pip_df <- data.frame(Variable = numeric_vars, 
-                     InclusionProb = pip)
-pip_df <- pip_df[order(pip_df$InclusionProb, decreasing = TRUE),]
-print(pip_df)
+#pip_df <- data.frame(Variable = numeric_vars, 
+#                     InclusionProb = pip)
+#pip_df <- pip_df[order(pip_df$InclusionProb, decreasing = TRUE),]
+#print(pip_df)
 
 selected_bayes <- c( "perimeter_mean", "concave_points_mean", "compactness_mean",
                      "concavity_mean", "area_se", "smoothness_se", "concave_points_se",
@@ -250,9 +253,6 @@ plot(out_b)
 ```
 
 ```{r}
-#install.packages("MCMCpack")  # If not installed
-library(MCMCpack)
-
 # Run Bayesian logistic regression with Spike-and-Slab priors (to variable selection)
 set.seed(123)
 model <- MCMClogit(formula, data = data, burnin = 5000, mcmc = 20000
@@ -264,133 +264,33 @@ apply(model, 2, function(x) mean(x != 0))  # Approximate inclusion probability
 ```
 
 
+## Evaluate Models with Deviance Information Criterion (DIC)
 
-# Simon
+In the following code, we will calculate the Deviance Information Criterion (DIC) for both the Frequentist and Bayesian models. The DIC is a measure of model fit that penalizes the complexity of the model. Lower values of DIC indicate better model fit. The DIC is calculated as follows: 
 
-```{r}
-# Create a correlation matrix between diagnosis and numeric variables
-cor_diagnosis <- sapply(data[, numeric_vars], function(x) cor(as.numeric(data$diagnosis), x))
-high_corr_vars <- names(cor_diagnosis)[abs(cor_diagnosis) > 0.7]
+\[
+DIC = \bar{D} + p_D
+\]
 
-model_formula <- as.formula(paste("diagnosis ~", paste(high_corr_vars, collapse = " + ")))
-model_formula
-```
+where:  
+- \(\bar{D}\) is the posterior mean deviance:  
+  \[
+  \bar{D} = \mathbb{E}[D(\theta) \mid \mathcal{D}]
+  \]
+  with \( D(\theta) = -2 \log p(\mathcal{D} \mid \theta) \), the deviance evaluated at parameter \(\theta\).
+- \( p_D \) a penalization term (effective number of parameters to penalize model complexity):  
+  \[
+  p_D = \bar{D} - D(\hat{\theta})
+  \]
+  where \( \hat{\theta} \) is the posterior mean of \(\theta\).
 
-
-```{r,warning=FALSE}
-# Fit the frequentist logistic regression model
-library(MASS)
-logit_frequentist <- glm(model_formula, data = data, family = binomial)
-step_model <- stepAIC(logit_frequentist, direction = "both")
-
-summary(step_model)
-```
-
-
-
-
-
-
-```{r}
-
-# Now use Frequentist model formular and parameters starting values in MCMClogit
-
-step_AIC_formula = formula(step_model)
-beta.start <- coef(step_model)
-
-logit_bayesian <- MCMClogit(diagnosis ~ concave_points_mean + radius_worst + perimeter_worst, 
-                        burnin = 1000, mcmc = 10000, 
-                        data = data,lag=20 )#, beta.start = beta.start)
-
-acf(logit_bayesian)
-summary(logit_bayesian)
-
-```
+The R implementation of the DIC function is as follows and was developed with help of Prof Michael Wiper:
 
 ```{r}
 # DIC Code
-
-
-model = logit_bayesian
-X <- model.matrix(~ concave_points_mean+radius_worst+perimeter_worst, data = data) # model matrix
-
-dev = 0
-for (i in 1:nrow(model)) {
-  params <- model[i,]
-  p = inv.logit(X %*% params)
-  p[data$target == 0] = 1-p[data$target == 0]
-  dev = dev - 2 * sum(log(p))  # Negative log-likelihood
-}
-D_bar = dev / nrow(model)
-
-# D_theta: Deviance at the posterior mean (using the average parameter values)
-posterior_means <- colMeans(model)
-#X <- model.matrix(~ predictors, data = data)
-linear_predictor <- X %*% posterior_means
-p_post <- inv.logit(linear_predictor)
-p_post[data$target == 0] = 1-p_post[data$target == 0]
-
-D_theta = -2 * sum(log(p_post)) # Deviance at the posterior mean
-
-# p_D: Posterior deviance penalty
-p_D = D_bar - D_theta
-
-# DIC
-DIC = D_bar + p_D
-
-print(list(DIC=DIC, D_bar=D_bar, p_D=p_D))
-```
-
-
-
-
-```{r}
-# DIC Function
-DIC = function(model, predictors, data, target) {
-  
-  # D_bar: Get mean Deviance of MCMC 
-  dev = 0
-  for (i in 1:nrow(model)) {
-    params <- model[i,]
-    X <- model.matrix(~ predictors, data = data)
-    print(X)
-    print(params)
-    p = inv.logit(X %*% params)
-    p[data$target == 0] = 1-p[data$target == 0]
-    dev = dev - 2 * sum(log(p))  # Negative log-likelihood
-    print(dev)
-  }
-  D_bar = dev / nrow(model)
-  
-  # D_theta: Deviance at the posterior mean (using the average parameter values)
-  posterior_means <- colMeans(model)
-  X <- model.matrix(~ predictors, data = data)
-  linear_predictor <- X %*% posterior_means
-  p_post <- inv.logit(linear_predictor)
-  p_post[data$target == 0] = 1-p_post[data$target == 0]
-  
-  D_theta = -2 * sum(log(p_post)) # Deviance at the posterior mean
-  
-  # p_D: Posterior deviance penalty
-  p_D = D_bar - D_theta
-
-  # DIC
-  DIC = D_bar + p_D
-  return(list(DIC=DIC, D_bar=D_bar, p_D=p_D))
-}
-
-```
-
-
-# Evaluate Models with DIC
-
-```{r}
-
-
-# DIC Code
-
 DIC = function(model, X, data, target) {
   dev = 0
+  # Calculate Average Deviance of MCMC
   for (i in 1:nrow(model)) {
     params <- model[i,]
     p = inv.logit(X %*% params)
@@ -418,6 +318,9 @@ DIC = function(model, X, data, target) {
 ```
 
 
+We now continue with applying the DIC Score to the model derived from frequentist variable selection and the model derived from Bayesian variable selection. The straight forward conclusion is that the DIC is significantly better (lower) for the model that was set up with the Bayesian Variable Selection approach. Based on this result, we conclude this to be the best model and will use it for further analysis.
+
+
 ```{r}
 # Frequentist
 model = out
@@ -427,11 +330,9 @@ X <- model.matrix(~ texture_mean + smoothness_mean + symmetry_mean +
     texture_worst + smoothness_worst + symmetry_worst + fractal_dimension_worst, data = data) # model matrix
 target = "diagnosis"
 
+print("Frequentist Variable Selection DIC Score")
 DIC(model, X, data, target)
-```
 
-
-```{r}
 # Bayesian
 model = out_b
 X <- model.matrix(~ perimeter_mean + concave_points_mean + compactness_mean + 
@@ -439,7 +340,17 @@ X <- model.matrix(~ perimeter_mean + concave_points_mean + compactness_mean +
     fractal_dimension_se + radius_worst + texture_worst + fractal_dimension_worst, data = data) # model matrix
 target = "diagnosis"
 
+print("Bayesian Variable Selection DIC Score")
 DIC(model, X, data, target)
 ```
 
+# Prediction
 
+```{r}
+# TODO: Make predictions
+```
+
+
+# Conclusion
+
+TODO: Write Conclusion

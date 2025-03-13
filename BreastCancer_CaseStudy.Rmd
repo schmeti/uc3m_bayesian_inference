@@ -40,10 +40,10 @@ Where Malignant (M) means the tumor is cancerous, while Benign (B): means that t
 ## Read Data
 ```{r}
 data <- read.csv("data.csv", header = TRUE, sep = ",")
-data <- dplyr::select(data, -X)
+data <- dplyr::select(data, -c(X,id))
 names(data) <- gsub("\\.", "_", names(data))
 data$diagnosis <- ifelse(data$diagnosis == "M", 1, 0)
-data <- data %>%  select(-id)
+
 
 ```
 
@@ -382,8 +382,64 @@ DIC = function(model, predictors, data, target) {
 ```
 
 
+# Evaluate Models with DIC
+
+```{r}
 
 
+# DIC Code
 
+DIC = function(model, X, data, target) {
+  dev = 0
+  for (i in 1:nrow(model)) {
+    params <- model[i,]
+    p = inv.logit(X %*% params)
+    p[data[target] == 0] = 1-p[data[target] == 0]
+    dev = dev - 2 * sum(log(p))  # Negative log-likelihood
+  }
+  D_bar = dev / nrow(model)
+  
+  # D_theta: Deviance at the posterior mean (using the average parameter values)
+  posterior_means <- colMeans(model)
+  linear_predictor <- X %*% posterior_means
+  p_post <- inv.logit(linear_predictor)
+  p_post[data[target] == 0] = 1-p_post[data[target] == 0]
+  
+  D_theta = -2 * sum(log(p_post)) # Deviance at the posterior mean
+  
+  # p_D: Posterior deviance penalty
+  p_D = D_bar - D_theta
+  
+  # DIC
+  DIC = D_bar + p_D
+  
+  return(list(DIC=DIC, D_bar=D_bar, p_D=p_D))
+}
+```
+
+
+```{r}
+# Frequentist
+model = out
+X <- model.matrix(~ texture_mean + smoothness_mean + symmetry_mean + 
+    fractal_dimension_mean + texture_se + smoothness_se + compactness_se + 
+    concavity_se + concave_points_se + symmetry_se + fractal_dimension_se + 
+    texture_worst + smoothness_worst + symmetry_worst + fractal_dimension_worst, data = data) # model matrix
+target = "diagnosis"
+
+DIC(model, X, data, target)
+```
+
+
+```{r}
+# Bayesian
+model = out_b
+X <- model.matrix(~ perimeter_mean + concave_points_mean + compactness_mean + 
+    concavity_mean + area_se + smoothness_se + concave_points_se + 
+    fractal_dimension_se + radius_worst + texture_worst + fractal_dimension_worst, data = data) # model matrix
+target = "diagnosis"
+
+DIC(model, X, data, target)
+```
 
 

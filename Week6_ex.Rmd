@@ -1,0 +1,65 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+data = data(stackloss)
+data <- stackloss
+head(data)
+```
+# a) Scatterplot
+```{r}
+pairs(stackloss, main = "Scatter Plot")
+
+```
+
+# b) Frequentist regression
+```{r}
+freq_reg = lm(stack.loss ~ ., data = data)
+summary(freq_reg)
+
+print("confidence intervals for aprameters")
+confint(freq_reg,level=0.95)
+
+print("prediction vs true value")
+cbind(data["stack.loss"],predict(freq_reg))
+
+print("Confidence Intervals")
+predict(freq_reg,newdata = data.frame(Air.Flow=60,Water.Temp=20,Acid.Conc.=80),interval = "confidence",level = 0.95)
+
+
+print("Prediction Interval")
+predict(freq_reg,newdata = data.frame(Air.Flow=60,Water.Temp=20,Acid.Conc.=80),interval = "prediction",level = 0.95)
+```
+
+# c) Bayesian regression
+```{r}
+library(MCMCpack)
+burnin = 1000
+mcmc = 10000
+
+# train model
+bayes_reg = MCMCregress(stack.loss ~ ., data = data, burnin = burnin, mcmc = mcmc)
+summary(bayes_reg)
+
+# plot trace
+plot(bayes_reg)
+
+# posterior mean & medians
+apply(bayes_reg, 2, mean)
+apply(bayes_reg, 2, median)
+
+# credible intervals
+apply(bayes_reg, 2, quantile, probs= c(0.025, 0.975))
+
+# Predictions FIXXXXXXXXXXXXX################################
+beta_mean = apply(bayes_reg, 2, mean)
+X = as.matrix(data[["Air.Flow", "Water.Temp", "Acid.Conc."]])
+y_pred = X %*% beta_mean
+compare_pred = cbind(data["stack.loss"], y_pred)
+
+# Confidence intervals
+x_new 
+```
+

@@ -111,7 +111,7 @@ summary_long
 ```{r}
 # Check correlation between numeric variables
 cor_matrix <- cor(data[, numeric_vars])
-corrplot(cor_matrix, method = "circle")
+corrplot(cor_matrix, method = "circle",type="lower",tl.cex = 0.6)
 
 # Or find highly correlated variables
 high_cor <- findCorrelation(cor_matrix, cutoff = 0.8)

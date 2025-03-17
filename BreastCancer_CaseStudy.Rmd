@@ -3,10 +3,9 @@ title: "Breast Cancer Prediction Case Study - Bayesian Logistic Regression with 
 output: pdf_document
 date: "2025-03-14"
 author: "Laura Silvana Alvarez Luque, Florencia Luque, Nicolas Bühringer, Simon Schmetz"
-
 ---
 
-```{r warning=FALSE,include=FALSE}
+```{r message=FALSE, warning=FALSE}
 library(readr)
 library(dplyr)
 library(ggplot2)
@@ -17,36 +16,36 @@ library(caret)
 library(MCMCpack)
 library(car)
 library(boot)
+library(gridExtra)
 ```
-
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Introduction 
+# Introduction
 
-This case study is based on the Breast Cancer Wisconsin (Diagnostic) Data Set (https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data). The data set contains 569 observations and 32 variables. The data set is available at the UCI Machine Learning Repository. The data set contains mean (and at times min and max) values of the patient for the following numeric (continious) variables:
+This case study is based on the Breast Cancer Wisconsin (Diagnostic) Data Set (<https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data>). The data set contains 569 observations and 32 variables. The data set is available at the UCI Machine Learning Repository. The data set contains mean (and at times min and max) values of the patient for the following numeric (continious) variables:
 
-a) radius (mean of distances from center to points on the perimeter)
-b) texture (standard deviation of gray-scale values)
-c) perimeter
-d) area
-e) smoothness (local variation in radius lengths)
-f) compactness (perimeter^2 / area - 1.0)
-g) concavity (severity of concave portions of the contour)
-h) concave points (number of concave portions of the contour)
-i) symmetry
-j) fractal dimension ("coastline approximation" - 1)
+a)  radius (mean of distances from center to points on the perimeter)
+b)  texture (standard deviation of gray-scale values)
+c)  perimeter
+d)  area
+e)  smoothness (local variation in radius lengths)
+f)  compactness (perimeter\^2 / area - 1.0)
+g)  concavity (severity of concave portions of the contour)
+h)  concave points (number of concave portions of the contour)
+i)  symmetry
+j)  fractal dimension ("coastline approximation" - 1)
 
 The data set also contains the following Binary variables:
 
-2) Diagnosis (M = malignant, B = benign)
+2)  Diagnosis (M = malignant, B = benign)
 
 Where Malignant (M) means the tumor is cancerous, while Benign (B): means that the tumor is non-cancerous.
 
-
 # Read Data
+
 ```{r}
 data <- read.csv("data.csv", header = TRUE, sep = ",")
 data <- dplyr::select(data, -c(X,id))
@@ -72,8 +71,6 @@ plots <- lapply(numeric_vars, function(var) {
 })
 
 # Print all plots
-# install.packages("gridExtra")
-library(gridExtra)
 
 # Display plots in batches of 6 (2 rows × 3 columns)
 num_plots <- length(plots)
@@ -123,11 +120,10 @@ print(problematic_vars)
 ```
 
 # Variable Selection
-<!-- SILVANA -->
 
 ## Frequentist Approach
 
-Check VIF and remove variables with extremly high values
+Check VIF and remove variables with extremely high values
 
 ```{r}
 predictors <- setdiff(names(data), c("diagnosis"))
@@ -224,6 +220,7 @@ acf(out[,2])
 ```{r, fig.width=8, fig.height=6, fig.align='left'}
 plot(out)
 ```
+
 ## Bayes var selection
 
 ```{r}
@@ -247,7 +244,6 @@ acf(out_b[,1])
 acf(out_b[,2])
 ```
 
-
 ```{r, fig.width=8, fig.height=6, fig.align='left'}
 plot(out_b)
 ```
@@ -263,26 +259,22 @@ summary(model)
 apply(model, 2, function(x) mean(x != 0))  # Approximate inclusion probability
 ```
 
-
 ## Evaluate Models with Deviance Information Criterion (DIC)
 
-In the following code, we will calculate the Deviance Information Criterion (DIC) for both the Frequentist and Bayesian models. The DIC is a measure of model fit that penalizes the complexity of the model. Lower values of DIC indicate better model fit. The DIC is calculated as follows: 
+In the following code, we will calculate the Deviance Information Criterion (DIC) for both the Frequentist and Bayesian models. The DIC is a measure of model fit that penalizes the complexity of the model. Lower values of DIC indicate better model fit. The DIC is calculated as follows:
 
-\[
+$$
 DIC = \bar{D} + p_D
-\]
+$$
 
-where:  
-- \(\bar{D}\) is the posterior mean deviance:  
-  \[
+where:\
+- $\bar{D}$ is the posterior mean deviance:\
+$$
   \bar{D} = \mathbb{E}[D(\theta) \mid \mathcal{D}]
-  \]
-  with \( D(\theta) = -2 \log p(\mathcal{D} \mid \theta) \), the deviance evaluated at parameter \(\theta\).
-- \( p_D \) a penalization term (effective number of parameters to penalize model complexity):  
-  \[
+  $$ with $D(\theta) = -2 \log p(\mathcal{D} \mid \theta)$, the deviance evaluated at parameter $\theta$. - $p_D$ a penalization term (effective number of parameters to penalize model complexity):\
+$$
   p_D = \bar{D} - D(\hat{\theta})
-  \]
-  where \( \hat{\theta} \) is the posterior mean of \(\theta\).
+  $$ where $\hat{\theta}$ is the posterior mean of $\theta$.
 
 The R implementation of the DIC function is as follows and was developed with help of Prof Michael Wiper:
 
@@ -317,9 +309,7 @@ DIC = function(model, X, data, target) {
 }
 ```
 
-
 We now continue with applying the DIC Score to the model derived from frequentist variable selection and the model derived from Bayesian variable selection. The straight forward conclusion is that the DIC is significantly better (lower) for the model that was set up with the Bayesian Variable Selection approach. Based on this result, we conclude this to be the best model and will use it for further analysis.
-
 
 ```{r}
 # Frequentist
@@ -346,11 +336,35 @@ DIC(model, X, data, target)
 
 # Prediction
 
+Since we already have our posterior coefficients from the MCMC samples, predicting is fairly straightforward. We will just have to turn the log odds back into probability space and choose a suitable threshold probability for the two classes (1 = malignant (cancer), 0 = benign)).
+
+The standard threshold is 0.5. However, in the light of classifying cancer, one might choose this threshold more carefully. Assuming we are performing an initial cancer screening, we would prefer having a false positive than a false negative. In simpler words, we would rather initially classify something as cancer that later turns out as no cancer than missing a cancer diagnosis that actually is one. By lowering the threshold, we reduce our exposure to false negatives and increase sensitivity.
+
 ```{r}
-# TODO: Make predictions
+# posterior mean coefficients from MCMC samples
+posterior_means <- colMeans(out_b) 
+
+# linear preds is in log odds space
+linear_preds <- X %*% posterior_means 
+
+# inverse logit to get probabilities
+prob_preds <- 1 / (1 + exp(-linear_preds))  
+
+# turn proba into binary prediction
+test_preds <- ifelse(prob_preds >= 0.4, 1, 0)
 ```
 
+Now that we have our predictions, let's analyze the outcome
+
+```{r}
+conf_matrix <- confusionMatrix(as.factor(test_preds), 
+                               as.factor(data$diagnosis), 
+                               positive = "1")
+print(conf_matrix)
+```
+
+Overall, the model performs very well accurately classifying 98% of both malignant and benign cases. Our goal of achieving a high sensitivity was reached by correctly detecting 207 cancer cases out of 212 overall (97.6%). The specificity is also high with 98.3% of all benign cases correctly classified. Although false negatives might cause unnecessary medical procedures, we still prefer it this way. The model seems highly reliable as shown by the positive prediction value. When the model predicts cancer, it is correct 97.2% of the time. Overall, we have a more than solid classifier at hand.
 
 # Conclusion
 
-TODO: Write Conclusion
+This report applied bayesian logistic regression to predict breast cancer by using a breast mass cell dataset made available by the University of Irvine. The exploratory data analysis revealed significant correlations among predictors, which required variable selection. A comparison between frequentist and bayesian variable selection methods was conducted which proved the bayesian approach as far superior when assessed on the Deviance Information Criterion. The final model was evaluated via a confusion matrix which yielded a highly reliable classifier for cancer detection

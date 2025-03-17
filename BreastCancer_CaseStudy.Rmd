@@ -54,7 +54,7 @@ data$diagnosis <- ifelse(data$diagnosis == "M", 1, 0)
 
 ## Relation with response var
 
-```{r, fig.align='left'}
+```{r, fig.width=6, fig.height=4, fig.align='left'}
 numeric_vars <- data %>%select_if(is.numeric) %>% colnames()
 numeric_vars <- setdiff(numeric_vars, "diagnosis")
 
@@ -214,7 +214,7 @@ acf(out[,2])
 
 ```
 
-```{r, fig.width=8, fig.height=6, fig.align='left'}
+```{r, fig.width=6, fig.height=6, fig.align='left'}
 plot(out)
 ```
 
@@ -242,7 +242,7 @@ acf(out_b[,1])
 acf(out_b[,2])
 ```
 
-```{r, fig.width=8, fig.height=6, fig.align='left'}
+```{r, fig.width=6, fig.height=6, fig.align='left'}
 plot(out_b)
 ```
 
@@ -305,7 +305,8 @@ model = out
 X <- model.matrix(~ texture_mean + smoothness_mean + symmetry_mean + 
     fractal_dimension_mean + texture_se + smoothness_se + compactness_se + 
     concavity_se + concave_points_se + symmetry_se + fractal_dimension_se + 
-    texture_worst + smoothness_worst + symmetry_worst + fractal_dimension_worst, data = data) # model matrix
+    texture_worst + smoothness_worst + symmetry_worst + fractal_dimension_worst, data = data) 
+# model matrix
 target = "diagnosis"
 
 print("Frequentist Variable Selection DIC Score")
@@ -315,7 +316,8 @@ DIC(model, X, data, target)
 model = out_b
 X <- model.matrix(~ perimeter_mean + concave_points_mean + compactness_mean + 
     concavity_mean + area_se + smoothness_se + concave_points_se + 
-    fractal_dimension_se + radius_worst + texture_worst + fractal_dimension_worst, data = data) # model matrix
+    fractal_dimension_se + radius_worst + texture_worst + fractal_dimension_worst, data = data) 
+# model matrix
 target = "diagnosis"
 
 print("Bayesian Variable Selection DIC Score")

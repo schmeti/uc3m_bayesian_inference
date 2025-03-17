@@ -6,17 +6,12 @@ author: "Laura Silvana Alvarez Luque, Florencia Luque, Nicolas Bühringer, Simon
 ---
 
 ```{r message=FALSE, warning=FALSE}
-library(readr)
-library(dplyr)
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-library(corrplot)
-library(caret)
-library(MCMCpack)
-library(car)
-library(boot)
-library(gridExtra)
+library(readr);library(dplyr)
+library(ggplot2);library(dplyr)
+library(tidyr);library(corrplot)
+library(caret);library(MCMCpack)
+library(car);library(boot)
+library(gridExtra); library(BAS)
 ```
 
 ```{r setup, include=FALSE}
@@ -138,11 +133,9 @@ vif_df <- data.frame(
   VIF = vif_values
 )
 vif_df <- vif_df %>% arrange(desc(VIF))
-print(vif_df)
+print(head(vif_df,5))
 
 vars_to_exclude <- c(head(vif_df,15)$Variable)
-# setdiff(problematic_vars , vars_to_exclude)
-# setdiff(vars_to_exclude, problematic_vars)
 ```
 
 Check correlations after excluding x VIF, variables to pay attention if something does not work.
@@ -150,7 +143,7 @@ Check correlations after excluding x VIF, variables to pay attention if somethin
 ```{r}
 # Check correlation between numeric variables
 cor_matrix_f <- cor(data[, setdiff(numeric_vars, vars_to_exclude)])
-corrplot(cor_matrix, method = "circle")
+# corrplot(cor_matrix, method = "circle")
 
 # Or find highly correlated variables
 high_cor_f <- findCorrelation(cor_matrix_f, cutoff = 0.8)
@@ -162,9 +155,9 @@ selected_freq <- setdiff(numeric_vars, vars_to_exclude)
 
 ## Bayesian Approach
 
-```{r}
-library(BAS)
+We obtain the posterior probability of including each beta, and also, some statistics for different models in order to select which one is the better. Then, we select the variables that compound the model with highest BF and lower logmarg.
 
+```{r}
 # Fit a Bayesian logistic regression with variable selection
 model_bas <- bas.glm(diagnosis ~ ., 
                      data = data,
@@ -174,7 +167,7 @@ model_bas <- bas.glm(diagnosis ~ .,
                      modelprior = uniform()) # Prior over model space
 
 # Summary of results
-summary(model_bas)
+summary(model_bas)[30:36,]
 
 # Posterior inclusion probabilities
 pip <- model_bas$probne0
@@ -190,11 +183,15 @@ selected_bayes <- c( "perimeter_mean", "concave_points_mean", "compactness_mean"
                      "fractal_dimension_worst")
 ```
 
+
 # Logistic Models
+
+Then we fit the models for the variable selected in each case, evaluate the autocorrelation and fix the thinning parameter and starting point. This second one is selected as the beta estimation of a regular linear model.
+
 
 ## Freq var selection
 
-```{r warning=FALSE}
+```{r warning=FALSE, fig.width=7, fig.height=4, fig.align='left'}
 formula_str <- paste("diagnosis ~", paste(selected_freq, collapse = " + "))
 formula <- as.formula(formula_str)
 
@@ -202,16 +199,16 @@ freq_model1<-lm(formula, data = data)
 beta.start1 <- coef(freq_model1)
 
 out = MCMClogit(formula, data, burnin=1000, mcmc=21000, beta.start = beta.start1)
-summary(out)
-
-acf(out[,1])
-acf(out[,2])
+# summary(out)
+# acf(out[,1])
+# acf(out[,2])
 
 # Correct autocorrelation
 
 out = MCMClogit(formula, data, burnin=5000, mcmc=30000, thin = 30,
                 beta.start = beta.start1)
 summary(out)
+par(mfrow=c(1,2))
 acf(out[,1])
 acf(out[,2])
 
@@ -223,7 +220,7 @@ plot(out)
 
 ## Bayes var selection
 
-```{r}
+```{r, fig.width=7, fig.height=4, fig.align='left'}
 formula_str_b <- paste("diagnosis ~", paste(selected_bayes, collapse = " + "))
 formula_b <- as.formula(formula_str_b)
 
@@ -232,14 +229,15 @@ freq_model<-lm(formula_b, data = data)
 beta.start <- coef(freq_model)
 
 out_b = MCMClogit(formula_b, data, burnin=1000, mcmc=21000)
-summary(out_b)
-acf(out_b[,1])
-acf(out_b[,2])
+# summary(out_b)
+# acf(out_b[,1])
+# acf(out_b[,2])
 
 out_b = MCMClogit(formula_b, data, burnin=5000, mcmc=50000, 
                   beta.start = beta.start, thin = 50, tune=0.5)
 
 summary(out_b)
+par(mfrow=c(1,2))
 acf(out_b[,1])
 acf(out_b[,2])
 ```
@@ -248,16 +246,6 @@ acf(out_b[,2])
 plot(out_b)
 ```
 
-```{r}
-# Run Bayesian logistic regression with Spike-and-Slab priors (to variable selection)
-set.seed(123)
-model <- MCMClogit(formula, data = data, burnin = 5000, mcmc = 20000
-                   , marginal.likelihood = "Laplace") # , thin = 10, b0 = 0, B0 = 0.1
-
-summary(model)
-
-apply(model, 2, function(x) mean(x != 0))  # Approximate inclusion probability
-```
 
 ## Evaluate Models with Deviance Information Criterion (DIC)
 

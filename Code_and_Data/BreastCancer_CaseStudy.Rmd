@@ -1,0 +1,360 @@
+---
+title: "Breast Cancer Prediction Case Study - Bayesian Logistic Regression with Comparison of Frequentist and Bayesian Variable Selection Methods"
+output: pdf_document
+date: "2025-03-14"
+author: "Laura Silvana Alvarez Luque, Florencia Luque, Nicolas Bühringer, Simon Schmetz"
+---
+
+```{r message=FALSE, warning=FALSE}
+library(readr);library(dplyr)
+library(ggplot2);library(dplyr)
+library(tidyr);library(corrplot)
+library(caret);library(MCMCpack)
+library(car);library(boot)
+library(gridExtra); library(BAS)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This case study is based on the Breast Cancer Wisconsin (Diagnostic) Data Set (<https://www.kaggle.com/datasets/uciml/breast-cancer-wisconsin-data>). The data set contains 569 observations and 32 variables. The data set is available at the UCI Machine Learning Repository. The data set contains mean (and at times min and max) values of the patient for the following numeric (continious) variables:
+
+a)  radius (mean of distances from center to points on the perimeter)
+b)  texture (standard deviation of gray-scale values)
+c)  perimeter
+d)  area
+e)  smoothness (local variation in radius lengths)
+f)  compactness (perimeter\^2 / area - 1.0)
+g)  concavity (severity of concave portions of the contour)
+h)  concave points (number of concave portions of the contour)
+i)  symmetry
+j)  fractal dimension ("coastline approximation" - 1)
+
+The data set also contains the following Binary variables:
+
+2)  Diagnosis (M = malignant, B = benign)
+
+Where Malignant (M) means the tumor is cancerous, while Benign (B): means that the tumor is non-cancerous.
+
+# Read Data
+
+```{r}
+data <- read.csv("data.csv", header = TRUE, sep = ",")
+data <- dplyr::select(data, -c(X,id))
+names(data) <- gsub("\\.", "_", names(data))
+data$diagnosis <- ifelse(data$diagnosis == "M", 1, 0)
+
+
+```
+
+# Exploratory Data Analysis
+
+## Relation with response var
+
+```{r, fig.width=6, fig.height=4, fig.align='left'}
+numeric_vars <- data %>%select_if(is.numeric) %>% colnames()
+numeric_vars <- setdiff(numeric_vars, "diagnosis")
+
+plots <- lapply(numeric_vars, function(var) {
+  ggplot(data, aes(x = factor(diagnosis), y = .data[[var]], fill = diagnosis)) + 
+    geom_boxplot() +  
+    labs(x = "Diagnosis", y = var) +
+    theme_minimal()
+})
+
+# Print all plots
+
+# Display plots in batches of 6 (2 rows × 3 columns)
+num_plots <- length(plots)
+batch_size <- 6
+
+for(i in seq(1, num_plots, batch_size)) {
+  end_idx <- min(i + batch_size - 1, num_plots)
+  batch_plots <- plots[i:end_idx]
+  grid.arrange(grobs = batch_plots, ncol = 3)
+}
+```
+
+```{r}
+summary_stat <- data %>% 
+  group_by(factor(diagnosis)) %>% 
+  summarise(across(all_of(numeric_vars), 
+                  list(
+                    mean = ~mean(.x, na.rm = TRUE),
+                    sd = ~sd(.x, na.rm = TRUE),
+                    median = ~median(.x, na.rm = TRUE),
+                    min = ~min(.x, na.rm = TRUE),
+                    max = ~max(.x, na.rm = TRUE)
+                  )
+            ))
+
+
+# For easier viewing, you can pivot longer
+summary_long <- summary_stat %>%
+  pivot_longer(cols = -`factor(diagnosis)`, 
+               names_to = c("variable", "stat"), 
+               names_pattern = "(.*)_(.*)")
+
+summary_long
+```
+
+## Correlation
+
+```{r}
+# Check correlation between numeric variables
+cor_matrix <- cor(data[, numeric_vars])
+corrplot(cor_matrix, method = "circle",type="lower",tl.cex = 0.6)
+
+# Or find highly correlated variables
+high_cor <- findCorrelation(cor_matrix, cutoff = 0.8)
+problematic_vars <- numeric_vars[high_cor]
+print(problematic_vars)
+```
+
+# Variable Selection
+
+## Frequentist Approach
+
+Check VIF and remove variables with extremely high values
+
+```{r}
+predictors <- setdiff(names(data), c("diagnosis"))
+formula_str <- paste("diagnosis ~", paste(predictors, collapse = " + "))
+formula <- as.formula(formula_str)
+
+l_reg = lm(formula, data)
+vif_values <- vif(l_reg)
+
+vif_df <- data.frame(
+  Variable = names(vif_values),
+  VIF = vif_values
+)
+vif_df <- vif_df %>% arrange(desc(VIF))
+print(head(vif_df,5))
+
+vars_to_exclude <- c(head(vif_df,15)$Variable)
+```
+
+Check correlations after excluding x VIF, variables to pay attention if something does not work.
+
+```{r}
+# Check correlation between numeric variables
+cor_matrix_f <- cor(data[, setdiff(numeric_vars, vars_to_exclude)])
+# corrplot(cor_matrix, method = "circle")
+
+# Or find highly correlated variables
+high_cor_f <- findCorrelation(cor_matrix_f, cutoff = 0.8)
+problematic_vars_f <- setdiff(numeric_vars, vars_to_exclude)[high_cor_f]
+print(problematic_vars_f)
+
+selected_freq <- setdiff(numeric_vars, vars_to_exclude)
+```
+
+## Bayesian Approach
+
+We obtain the posterior probability of including each beta, and also, some statistics for different models in order to select which one is the better. Then, we select the variables that compound the model with highest BF and lower logmarg.
+
+```{r}
+# Fit a Bayesian logistic regression with variable selection
+model_bas <- bas.glm(diagnosis ~ ., 
+                     data = data,
+                     family = binomial(),
+                     method = "MCMC", # or "BAS" for deterministic sampling
+                     MCMC.iterations = 10000,
+                     modelprior = uniform()) # Prior over model space
+
+# Summary of results
+summary(model_bas)[30:36,]
+
+# Posterior inclusion probabilities
+pip <- model_bas$probne0
+variable_names <- names(pip)
+#pip_df <- data.frame(Variable = numeric_vars, 
+#                     InclusionProb = pip)
+#pip_df <- pip_df[order(pip_df$InclusionProb, decreasing = TRUE),]
+#print(pip_df)
+
+selected_bayes <- c( "perimeter_mean", "concave_points_mean", "compactness_mean",
+                     "concavity_mean", "area_se", "smoothness_se", "concave_points_se",
+                     "fractal_dimension_se","radius_worst", "texture_worst",
+                     "fractal_dimension_worst")
+```
+
+
+# Logistic Models
+
+Then we fit the models for the variable selected in each case, evaluate the autocorrelation and fix the thinning parameter and starting point. This second one is selected as the beta estimation of a regular linear model.
+
+
+## Freq var selection
+
+```{r warning=FALSE, fig.width=7, fig.height=4, fig.align='left'}
+formula_str <- paste("diagnosis ~", paste(selected_freq, collapse = " + "))
+formula <- as.formula(formula_str)
+
+freq_model1<-lm(formula, data = data)
+beta.start1 <- coef(freq_model1)
+
+out = MCMClogit(formula, data, burnin=1000, mcmc=21000, beta.start = beta.start1)
+# summary(out)
+# acf(out[,1])
+# acf(out[,2])
+
+# Correct autocorrelation
+
+out = MCMClogit(formula, data, burnin=5000, mcmc=30000, thin = 30,
+                beta.start = beta.start1)
+summary(out)
+par(mfrow=c(1,2))
+acf(out[,1])
+acf(out[,2])
+
+```
+
+```{r, fig.width=6, fig.height=6, fig.align='left'}
+plot(out)
+```
+
+## Bayes var selection
+
+```{r, fig.width=7, fig.height=4, fig.align='left'}
+formula_str_b <- paste("diagnosis ~", paste(selected_bayes, collapse = " + "))
+formula_b <- as.formula(formula_str_b)
+
+# starting point
+freq_model<-lm(formula_b, data = data)
+beta.start <- coef(freq_model)
+
+out_b = MCMClogit(formula_b, data, burnin=1000, mcmc=21000)
+# summary(out_b)
+# acf(out_b[,1])
+# acf(out_b[,2])
+
+out_b = MCMClogit(formula_b, data, burnin=5000, mcmc=50000, 
+                  beta.start = beta.start, thin = 50, tune=0.5)
+
+summary(out_b)
+par(mfrow=c(1,2))
+acf(out_b[,1])
+acf(out_b[,2])
+```
+
+```{r, fig.width=6, fig.height=6, fig.align='left'}
+plot(out_b)
+```
+
+
+## Evaluate Models with Deviance Information Criterion (DIC)
+
+In the following code, we will calculate the Deviance Information Criterion (DIC) for both the Frequentist and Bayesian models. The DIC is a measure of model fit that penalizes the complexity of the model. Lower values of DIC indicate better model fit. The DIC is calculated as follows:
+
+$$
+DIC = \bar{D} + p_D
+$$
+
+where:\
+- $\bar{D}$ is the posterior mean deviance:\
+$$
+  \bar{D} = \mathbb{E}[D(\theta) \mid \mathcal{D}]
+  $$ with $D(\theta) = -2 \log p(\mathcal{D} \mid \theta)$, the deviance evaluated at parameter $\theta$. - $p_D$ a penalization term (effective number of parameters to penalize model complexity):\
+$$
+  p_D = \bar{D} - D(\hat{\theta})
+  $$ where $\hat{\theta}$ is the posterior mean of $\theta$.
+
+The R implementation of the DIC function is as follows and was developed with help of Prof Michael Wiper:
+
+```{r}
+# DIC Code
+DIC = function(model, X, data, target) {
+  dev = 0
+  # Calculate Average Deviance of MCMC
+  for (i in 1:nrow(model)) {
+    params <- model[i,]
+    p = inv.logit(X %*% params)
+    p[data[target] == 0] = 1-p[data[target] == 0]
+    dev = dev - 2 * sum(log(p))  # Negative log-likelihood
+  }
+  D_bar = dev / nrow(model)
+  
+  # D_theta: Deviance at the posterior mean (using the average parameter values)
+  posterior_means <- colMeans(model)
+  linear_predictor <- X %*% posterior_means
+  p_post <- inv.logit(linear_predictor)
+  p_post[data[target] == 0] = 1-p_post[data[target] == 0]
+  
+  D_theta = -2 * sum(log(p_post)) # Deviance at the posterior mean
+  
+  # p_D: Posterior deviance penalty
+  p_D = D_bar - D_theta
+  
+  # DIC
+  DIC = D_bar + p_D
+  
+  return(list(DIC=DIC, D_bar=D_bar, p_D=p_D))
+}
+```
+
+We now continue with applying the DIC Score to the model derived from frequentist variable selection and the model derived from Bayesian variable selection. The straight forward conclusion is that the DIC is significantly better (lower) for the model that was set up with the Bayesian Variable Selection approach. Based on this result, we conclude this to be the best model and will use it for further analysis.
+
+```{r}
+# Frequentist
+model = out
+X <- model.matrix(~ texture_mean + smoothness_mean + symmetry_mean + 
+    fractal_dimension_mean + texture_se + smoothness_se + compactness_se + 
+    concavity_se + concave_points_se + symmetry_se + fractal_dimension_se + 
+    texture_worst + smoothness_worst + symmetry_worst + fractal_dimension_worst, data = data) 
+# model matrix
+target = "diagnosis"
+
+print("Frequentist Variable Selection DIC Score")
+DIC(model, X, data, target)
+
+# Bayesian
+model = out_b
+X <- model.matrix(~ perimeter_mean + concave_points_mean + compactness_mean + 
+    concavity_mean + area_se + smoothness_se + concave_points_se + 
+    fractal_dimension_se + radius_worst + texture_worst + fractal_dimension_worst, data = data) 
+# model matrix
+target = "diagnosis"
+
+print("Bayesian Variable Selection DIC Score")
+DIC(model, X, data, target)
+```
+
+# Prediction
+
+Since we already have our posterior coefficients from the MCMC samples, predicting is fairly straightforward. We will just have to turn the log odds back into probability space and choose a suitable threshold probability for the two classes (1 = malignant (cancer), 0 = benign)).
+
+The standard threshold is 0.5. However, in the light of classifying cancer, one might choose this threshold more carefully. Assuming we are performing an initial cancer screening, we would prefer having a false positive than a false negative. In simpler words, we would rather initially classify something as cancer that later turns out as no cancer than missing a cancer diagnosis that actually is one. By lowering the threshold, we reduce our exposure to false negatives and increase sensitivity.
+
+```{r}
+# posterior mean coefficients from MCMC samples
+posterior_means <- colMeans(out_b) 
+
+# linear preds is in log odds space
+linear_preds <- X %*% posterior_means 
+
+# inverse logit to get probabilities
+prob_preds <- 1 / (1 + exp(-linear_preds))  
+
+# turn proba into binary prediction
+test_preds <- ifelse(prob_preds >= 0.4, 1, 0)
+```
+
+Now that we have our predictions, let's analyze the outcome
+
+```{r}
+conf_matrix <- confusionMatrix(as.factor(test_preds), 
+                               as.factor(data$diagnosis), 
+                               positive = "1")
+print(conf_matrix)
+```
+
+Overall, the model performs very well accurately classifying 98% of both malignant and benign cases. Our goal of achieving a high sensitivity was reached by correctly detecting 207 cancer cases out of 212 overall (97.6%). The specificity is also high with 98.3% of all benign cases correctly classified. Although false negatives might cause unnecessary medical procedures, we still prefer it this way. The model seems highly reliable as shown by the positive prediction value. When the model predicts cancer, it is correct 97.2% of the time. Overall, we have a more than solid classifier at hand.
+
+# Conclusion
+
+This report applied bayesian logistic regression to predict breast cancer by using a breast mass cell dataset made available by the University of Irvine. The exploratory data analysis revealed significant correlations among predictors, which required variable selection. A comparison between frequentist and bayesian variable selection methods was conducted which proved the bayesian approach as far superior when assessed on the Deviance Information Criterion. The final model was evaluated via a confusion matrix which yielded a highly reliable classifier for cancer detection
